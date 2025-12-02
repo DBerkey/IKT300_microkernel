@@ -1,0 +1,73 @@
+
+@startuml
+title Microkernel Architecture (Enhanced)
+
+package "Microkernel Core" {
+    [Microkernel] as MK
+    [Process Manager] as PM
+    [Event Bus] as EB
+    [Plugin Registry] as PR
+}
+
+package "IPC Layer" {
+    [TCP Socket Server] as IPC
+    [Serialization Layer (JSON/Protobuf)] as SL
+    [Security Layer (TLS + Auth)] as SEC
+}
+
+package "Plugin Processes" {
+    [MetricsLoggerPlugin] as MLP
+    [OtherPlugin] as OP
+}
+
+package "Fault Isolation" {
+    [Supervisor] as SUP
+    [Restart Controller (Backoff)] as RC
+}
+
+package "Monitoring & Observability" {
+    [Heartbeat Monitor] as HM
+    [Metrics Collector] as MC
+}
+
+package "External Interfaces" {
+    [Event Source (REST API)] as ES
+}
+
+' Event Flow
+ES --> MK : Incoming Events
+MK --> EB : Publish Event
+EB --> SL : Serialize Event
+SL --> IPC : Send via TCP Socket
+IPC --> MLP : Deliver Event
+IPC --> OP : Deliver Event
+
+' Plugin Registration
+MLP --> PR : Register Plugin
+OP --> PR : Register Plugin
+
+' Heartbeat & Fault Handling
+MLP --> HM : Heartbeat Signal
+OP --> HM : Heartbeat Signal
+HM --> SUP : Detect Failure
+SUP --> RC : Apply Restart Policy
+RC --> PM : Relaunch Plugin
+
+' Notes
+note right of MK
+Language: C#
+- Strong typing
+- Async support
+-- Process management
+end note
+
+note bottom of IPC
+IPC: TCP Sockets + TLS
+- Secure
+- Cross-platform
+end note
+
+note bottom of SL
+Message Format: JSON (future: Protobuf)
+end note
+
