@@ -25,10 +25,3 @@ Plugin interface
 Fault handling & restart policy
 - Kernel monitors `LastReceived` timestamp for each plugin.
 - When heartbeat not received within a timeout, kernel kills process if alive and starts a new one.
-
-Future improvements
-- TLS to encrypt IPC
-- Better message framing; binary formats (protobuf) for performance
-- Plugin capabilities discovery and dynamic registration
-- Backoff restart policy and supervisor strategies
-- Integration testing harness and unit tests

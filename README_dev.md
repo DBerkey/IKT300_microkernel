@@ -33,29 +33,9 @@ cd ..\IKT300.Microkernel
 dotnet run --project .\IKT300.Microkernel.csproj
 ```
 
-4) If you want to run the sample plugin manually in another console:
-
-```powershell
-cd ..\IKT300.Plugin.Sample
-# Plugin run via `dotnet run` (builds and runs the project)
-dotnet run --project .\IKT300.Plugin.Sample.csproj -- --kernelHost 127.0.0.1 --kernelPort 9000 --pluginId SamplePlugin
-```
-
-Or run the compiled plugin DLL directly (recommended when running from the kernel to ensure plugin stdout/stderr are captured correctly):
-
-```powershell
-dotnet ..\IKT300.Plugin.Sample\bin\Debug\net8.0\IKT300.Plugin.Sample.dll --kernelHost 127.0.0.1 --kernelPort 9000 --pluginId SamplePlugin
-```
-
 Kernel interactive commands (enter in kernel console):
 - `list` — list registered plugins and status
 - `kill <pluginId>` — kill the plugin process (kernel may automatically restart it)
 - `start <pluginId>` — start a plugin process if not running
 ```
-
-Notes & Next steps:
-- Improve message framing and error handling
-- Add TLS option for secure IPC
-- Implement robust plugin discovery and configuration
-- Add a plugin CLI to manage plugins from kernel
 
