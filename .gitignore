@@ -1,0 +1,30 @@
+# Ignore common build artifacts for a microkernel / low-level C/C++ project
+# Build directories
+/build/
+/out/
+/bin/
+/obj/
+/dist/
+/target/
+
+# Compiled object files, libraries, kernels, images
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.lib
+*.elf
+*.bin
+*.img
+*.iso
+*.map
+*.lst
+
+# Visual Studio / Visual Studio Code / JetBrains
+.vs/
+.vscode/
+.idea/
+*.vcxproj*
+*.sln
+*.log
