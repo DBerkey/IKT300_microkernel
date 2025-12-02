@@ -26,5 +26,4 @@
 .vscode/
 .idea/
 *.vcxproj*
-*.sln
 *.log
