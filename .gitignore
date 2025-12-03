@@ -4,6 +4,8 @@
 /out/
 bin/
 obj/
+/Debug/
+**/Debug/
 /dist/
 /target/
 bin/
