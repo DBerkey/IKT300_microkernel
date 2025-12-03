@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using IKT300.Shared.Configuration;
 using IKT300.Shared.Models;
 
 namespace IKT300.Microkernel
@@ -17,7 +21,19 @@ namespace IKT300.Microkernel
         {
             Console.WriteLine("IKT300 Microkernel starting...");
 
-            var kernel = new KernelServer(IPAddress.Loopback, 9000);
+            string? configPath = args.Length > 0 ? args[0] : null;
+            KernelConfig config;
+            try
+            {
+                config = KernelConfig.LoadFromDefaultLocations(configPath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load configuration: {ex.Message}");
+                return;
+            }
+
+            var kernel = new KernelServer(config);
             await kernel.StartAsync();
 
             Console.WriteLine("Press Enter to shut down the kernel.");
@@ -29,15 +45,28 @@ namespace IKT300.Microkernel
 
     public class KernelServer
     {
+        private readonly KernelConfig _config;
+        private readonly Dictionary<string, PluginConfig> _pluginConfigs;
         private readonly TcpListener _listener;
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
-        private readonly ConcurrentDictionary<string, PluginInstance> _plugins = new ConcurrentDictionary<string, PluginInstance>();
+        private readonly ConcurrentDictionary<string, PluginInstance> _plugins = new ConcurrentDictionary<string, PluginInstance>(StringComparer.OrdinalIgnoreCase);
         private readonly TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(8);
 
-        public KernelServer(IPAddress address, int port)
+        public KernelServer(KernelConfig config)
         {
-            _listener = new TcpListener(address, port);
-            Console.WriteLine($"Kernel listening on {address}:{port}");
+            _config = config ?? throw new ArgumentNullException(nameof(config));
+            _pluginConfigs = _config.Plugins
+                .Where(p => !string.IsNullOrWhiteSpace(p.PluginId))
+                .ToDictionary(p => p.PluginId, StringComparer.OrdinalIgnoreCase);
+
+            if (!IPAddress.TryParse(_config.Host, out var address))
+            {
+                Console.WriteLine($"Invalid host '{_config.Host}'. Falling back to loopback.");
+                address = IPAddress.Loopback;
+            }
+
+            _listener = new TcpListener(address, _config.Port);
+            Console.WriteLine($"Kernel listening on {address}:{_config.Port}");
         }
 
         public async Task StartAsync()
@@ -47,8 +76,10 @@ namespace IKT300.Microkernel
             _ = Task.Run(HeartbeatMonitorLoop);
             Console.WriteLine("Kernel started.");
 
-            // Example: Start a sample plugin process; in a real system you'll discover plugins by config
-            StartPluginProcess("SamplePlugin");
+            foreach (var plugin in _pluginConfigs.Values.Where(p => p.Enabled))
+            {
+                StartPluginProcess(plugin.PluginId);
+            }
             _ = Task.Run(CommandLoopAsync);
         }
 
@@ -65,39 +96,172 @@ namespace IKT300.Microkernel
 
         private void StartPluginProcess(string pluginId)
         {
-            // TODO: configurable path, args etc.
-            var exe = "dotnet"; // run sample plugin via dotnet run
-            var workingDir = System.IO.Path.Combine("..", "IKT300.Plugin.Sample");
-            workingDir = System.IO.Path.GetFullPath(workingDir);
-            // NOTE: For demonstration: plugin will exit after 12 seconds to simulate a crash and test restart logic.
-            // Prefer running the compiled plugin dll if present; fallback to dotnet run
-            var pluginDll = System.IO.Path.Combine(workingDir, "bin", "Debug", "net8.0", "IKT300.Plugin.Sample.dll");
-            bool hasDll = System.IO.File.Exists(pluginDll);
+            if (!_pluginConfigs.TryGetValue(pluginId, out var pluginConfig))
+            {
+                Console.WriteLine($"No configuration found for plugin '{pluginId}'.");
+                return;
+            }
+
+            try
+            {
+                var psi = CreatePluginStartInfo(pluginConfig);
+                Console.WriteLine($"Starting plugin {pluginId}");
+                var process = new Process { StartInfo = psi };
+                process.OutputDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId}] {e.Data}"); };
+                process.ErrorDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId} ERR] {e.Data}"); };
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                var pluginInst = new PluginInstance(pluginId, process);
+                _plugins[pluginId] = pluginInst;
+                Console.WriteLine($"Plugin process for {pluginId} started (pid:{process.Id}), workingDir:{psi.WorkingDirectory}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to start plugin {pluginId}: {ex.Message}");
+            }
+        }
+
+        private ProcessStartInfo CreatePluginStartInfo(PluginConfig pluginConfig)
+        {
+            var workingDir = ResolvePath(pluginConfig.WorkingDirectory);
+            if (!Directory.Exists(workingDir))
+            {
+                throw new DirectoryNotFoundException($"Plugin directory not found: {workingDir}");
+            }
+
+            var compiledDll = ResolveCompiledDllPath(pluginConfig, workingDir);
+            var hasCompiledDll = compiledDll is not null && File.Exists(compiledDll);
+
+            var configArg = string.IsNullOrWhiteSpace(_config.ConfigPath)
+                ? string.Empty
+                : $" --config \"{_config.ConfigPath}\"";
+            var commonArgs = $"--kernelHost {_config.Host} --kernelPort {_config.Port} --pluginId {pluginConfig.PluginId} --exitAfterSeconds {pluginConfig.ExitAfterSeconds}{configArg}";
+
             var psi = new ProcessStartInfo
             {
-                FileName = exe,
-                // No forced exit by default; pass exitAfterSeconds=0 to disable simulated crash
-                Arguments = hasDll
-                    ? $"\"{pluginDll}\" --kernelHost 127.0.0.1 --kernelPort 9000 --pluginId {pluginId} --exitAfterSeconds 0"
-                    : $"run --project \"{workingDir}\" -- --kernelHost 127.0.0.1 --kernelPort 9000 --pluginId {pluginId} --exitAfterSeconds 0",
+                FileName = "dotnet",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
                 WorkingDirectory = workingDir,
+                Arguments = hasCompiledDll
+                    ? $"\"{compiledDll}\" {commonArgs}"
+                    : $"run --project \"{workingDir}\" -- {commonArgs}"
             };
 
-            Console.WriteLine($"Starting plugin {pluginId}");
-            var p = new Process { StartInfo = psi };
-            p.OutputDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId}] {e.Data}"); };
-            p.ErrorDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId} ERR] {e.Data}"); };
-            p.Start();
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
+            if (!hasCompiledDll)
+            {
+                var message = compiledDll is not null
+                    ? $"Compiled plugin not found at {compiledDll}."
+                    : "No compiled plugin DLL detected.";
+                Console.WriteLine($"{message} Falling back to 'dotnet run'.");
+            }
 
-            var pluginInst = new PluginInstance(pluginId, p);
-            _plugins[pluginId] = pluginInst;
-            Console.WriteLine($"Plugin process for {pluginId} started (pid:{p.Id}), workingDir:{workingDir}");
+            return psi;
+        }
+
+        private string? ResolveCompiledDllPath(PluginConfig pluginConfig, string workingDir)
+        {
+            if (!string.IsNullOrWhiteSpace(pluginConfig.DllRelativePath))
+            {
+                return Path.GetFullPath(Path.Combine(workingDir, pluginConfig.DllRelativePath));
+            }
+
+            var probableAssemblyName = Path.GetFileName(workingDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var candidateDirs = new[]
+            {
+                Path.Combine(workingDir, "bin", "Debug", "net8.0"),
+                Path.Combine(workingDir, "bin", "Release", "net8.0"),
+                Path.Combine(workingDir, "bin", "Debug"),
+                Path.Combine(workingDir, "bin", "Release")
+            };
+
+            foreach (var dir in candidateDirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+
+                string? dll = TryCandidateDlls(dir, probableAssemblyName, pluginConfig.PluginId);
+                if (dll is not null)
+                {
+                    return dll;
+                }
+            }
+
+            return null;
+        }
+
+        private static string? TryCandidateDlls(string directory, string? folderName, string pluginId)
+        {
+            var candidates = new List<string?>();
+            if (!string.IsNullOrWhiteSpace(folderName))
+            {
+                candidates.Add(Path.Combine(directory, folderName + ".dll"));
+            }
+            if (!string.Equals(folderName, pluginId, StringComparison.OrdinalIgnoreCase))
+            {
+                candidates.Add(Path.Combine(directory, pluginId + ".dll"));
+            }
+
+            foreach (var candidate in candidates)
+            {
+                if (candidate is not null && File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            try
+            {
+                var anyDll = Directory.GetFiles(directory, "*.dll").FirstOrDefault();
+                return anyDll;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private string ResolvePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw new InvalidDataException("Plugin working directory is not set in configuration.");
+            }
+
+            if (Path.IsPathRooted(path))
+            {
+                return Path.GetFullPath(path);
+            }
+
+            string? firstCandidate = null;
+            foreach (var baseDir in EnumerateSearchBases())
+            {
+                if (string.IsNullOrWhiteSpace(baseDir)) continue;
+                var candidate = Path.GetFullPath(Path.Combine(baseDir, path));
+                firstCandidate ??= candidate;
+                if (Directory.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return firstCandidate ?? Path.GetFullPath(path);
+        }
+
+        private IEnumerable<string?> EnumerateSearchBases()
+        {
+            var dir = _config.ConfigDirectory;
+            while (!string.IsNullOrWhiteSpace(dir))
+            {
+                yield return dir;
+                dir = Directory.GetParent(dir)?.FullName;
+            }
+
+            yield return Directory.GetCurrentDirectory();
+            yield return AppContext.BaseDirectory;
         }
 
         private async Task AcceptLoopAsync()
@@ -270,6 +434,18 @@ namespace IKT300.Microkernel
                         }
                         break;
                     case "start":
+                        if (string.IsNullOrWhiteSpace(arg))
+                        {
+                            Console.WriteLine("Usage: start <pluginId>");
+                            break;
+                        }
+
+                        if (!_pluginConfigs.ContainsKey(arg))
+                        {
+                            Console.WriteLine($"Unknown plugin '{arg}'. Known plugins: {string.Join(", ", _pluginConfigs.Keys)}");
+                            break;
+                        }
+
                         if (!_plugins.ContainsKey(arg)) StartPluginProcess(arg);
                         else Console.WriteLine($"Plugin {arg} exists; use kill to restart.");
                         break;
@@ -298,7 +474,14 @@ namespace IKT300.Microkernel
             }
 
             // Start new plugin instance
-            StartPluginProcess(id);
+            if (_pluginConfigs.ContainsKey(id))
+            {
+                StartPluginProcess(id);
+            }
+            else
+            {
+                Console.WriteLine($"Cannot restart plugin {id}: no configuration found.");
+            }
             return Task.CompletedTask;
         }
     }

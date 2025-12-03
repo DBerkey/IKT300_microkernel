@@ -2,8 +2,10 @@ using System;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using IKT300.Shared.Configuration;
 using IKT300.Shared.Models;
 
 namespace IKT300.Plugin.Sample
@@ -13,23 +15,53 @@ namespace IKT300.Plugin.Sample
         static async Task<int> Main(string[] args)
         {
             // Simple args parser
-            string kernelHost = "127.0.0.1";
-            int kernelPort = 9000;
+            string? kernelHostOverride = null;
+            int? kernelPortOverride = null;
+            int? exitAfterSecondsOverride = null;
+            string? configPathOverride = null;
             string pluginId = "SamplePlugin";
 
-            int exitAfterSeconds = 0;
             for (int i = 0; i < args.Length; i++)
             {
                 var a = args[i];
                 switch (a)
                 {
-                    case "--kernelHost": kernelHost = args[++i]; break;
-                    case "--kernelPort": kernelPort = int.Parse(args[++i]); break;
-                    case "--pluginId": pluginId = args[++i]; break;
-                    case "--exitAfterSeconds": exitAfterSeconds = int.Parse(args[++i]); break;
+                    case "--kernelHost":
+                        kernelHostOverride = args[++i];
+                        break;
+                    case "--kernelPort":
+                        kernelPortOverride = int.Parse(args[++i]);
+                        break;
+                    case "--pluginId":
+                        pluginId = args[++i];
+                        break;
+                    case "--exitAfterSeconds":
+                        exitAfterSecondsOverride = int.Parse(args[++i]);
+                        break;
+                    case "--config":
+                        configPathOverride = args[++i];
+                        break;
                 }
             }
 
+            KernelConfig? sharedConfig = null;
+            try
+            {
+                sharedConfig = KernelConfig.LoadFromDefaultLocations(configPathOverride);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Config load warning: {ex.Message}");
+            }
+
+            var kernelHost = kernelHostOverride ?? sharedConfig?.Host ?? "127.0.0.1";
+            var kernelPort = kernelPortOverride ?? sharedConfig?.Port ?? 9000;
+
+            var exitAfterSeconds = exitAfterSecondsOverride
+                ?? sharedConfig?.Plugins
+                    .FirstOrDefault(p => string.Equals(p.PluginId, pluginId, StringComparison.OrdinalIgnoreCase))?
+                    .ExitAfterSeconds
+                ?? 0;
             Console.WriteLine($"Plugin {pluginId} connecting to {kernelHost}:{kernelPort}");
 
             var cts = new CancellationTokenSource();

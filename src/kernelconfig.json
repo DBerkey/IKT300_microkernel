@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 9000,
+  "plugins": [
+    {
+      "pluginId": "SamplePlugin",
+      "workingDirectory": "IKT300.Plugin.Sample"
+    }
+  ]
+}
