@@ -51,6 +51,8 @@ namespace IKT300.Microkernel
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private readonly ConcurrentDictionary<string, PluginInstance> _plugins = new ConcurrentDictionary<string, PluginInstance>(StringComparer.OrdinalIgnoreCase);
         private readonly TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(8);
+        private readonly object _heartbeatLogLock = new object();
+        private readonly string _heartbeatLogPath;
 
         public KernelServer(KernelConfig config)
         {
@@ -58,6 +60,10 @@ namespace IKT300.Microkernel
             _pluginConfigs = _config.Plugins
                 .Where(p => !string.IsNullOrWhiteSpace(p.PluginId))
                 .ToDictionary(p => p.PluginId, StringComparer.OrdinalIgnoreCase);
+
+            var logDirectory = _config.ConfigDirectory ?? Directory.GetCurrentDirectory();
+            _heartbeatLogPath = Path.Combine(logDirectory, "kernel-heartbeats.log");
+            Directory.CreateDirectory(Path.GetDirectoryName(_heartbeatLogPath) ?? Directory.GetCurrentDirectory());
 
             if (!IPAddress.TryParse(_config.Host, out var address))
             {
@@ -251,6 +257,15 @@ namespace IKT300.Microkernel
             return firstCandidate ?? Path.GetFullPath(path);
         }
 
+        private void LogHeartbeat(string pluginId, int? sequence)
+        {
+            var logLine = $"{DateTime.UtcNow:O}\t{pluginId}\tseq={sequence?.ToString() ?? "-"}";
+            lock (_heartbeatLogLock)
+            {
+                File.AppendAllText(_heartbeatLogPath, logLine + Environment.NewLine);
+            }
+        }
+
         private IEnumerable<string?> EnumerateSearchBases()
         {
             var dir = _config.ConfigDirectory;
@@ -355,8 +370,7 @@ namespace IKT300.Microkernel
                     await SendMessageOverStreamAsync(ns, ack);
                     break;
                 case MessageTypes.Heartbeat:
-                    Console.WriteLine($"Heartbeat from {pluginId}");
-                    // update plugin last seen
+                    LogHeartbeat(pluginId, message.Metadata.Sequence);
                     break;
                 case MessageTypes.CommandRequest:
                     Console.WriteLine($"CommandRequest from {pluginId}");
