@@ -2,8 +2,8 @@
 # Build directories
 /build/
 /out/
-/bin/
-/obj/
+bin/
+obj/
 /dist/
 /target/
 bin/
@@ -29,3 +29,4 @@ obj/
 .idea/
 *.vcxproj*
 *.log
+
