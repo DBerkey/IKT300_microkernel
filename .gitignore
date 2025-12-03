@@ -6,6 +6,8 @@
 /obj/
 /dist/
 /target/
+**/bin/
+**/obj/
 
 # Compiled object files, libraries, kernels, images
 *.o
