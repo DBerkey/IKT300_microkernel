@@ -24,6 +24,8 @@ obj/
 *.iso
 *.map
 *.lst
+*.exe
+*.pdb
 
 # Visual Studio / Visual Studio Code / JetBrains
 .vs/
