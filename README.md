@@ -78,13 +78,7 @@ From the kernel console:
 start EventSimulator --count 5 --interval 2
 ```
 
-Run it directly during development:
-
-```powershell
-dotnet run --project src/IKT300.Plugin.EventSimulator/IKT300.Plugin.EventSimulator.csproj -- --interval 2 --count 5
-```
-
-View simulator help via `help EventSimulator`, `EventSimulator -h`, or `dotnet run -- … -- --help`.
+View simulator help via `help EventSimulator` or `EventSimulator -h` when the kernel is running.
 
 Flags (all optional):
 - `--interval <seconds>` – delay between payload types (default 3)
@@ -98,19 +92,10 @@ The MetricLogger plugin consumes simulator events and writes structured rows to 
 start MetricLogger
 ```
 
-Or run directly from the command line:
-
-```powershell
-dotnet run --project src/IKT300.Plugin.MetricLogger/IKT300.Plugin.MetricLogger.csproj -- --pluginId MetricLogger --exitAfterSeconds 20
-```
-
 View MetricLogger help with `help MetricLogger` or `MetricLogger -h` when the kernel is running.
 
-Useful flags:
-- `--kernelHost <host>` / `--kernelPort <port>` – override the connection target
-- `--pluginId <id>` – change the identity reported to the kernel
+Useful flag:
 - `--exitAfterSeconds <n>` – stop after the specified number of seconds
-- `--config <path>` – load kernel defaults from another config file
 
 ### Kernel Console Commands
 - `help [pluginId]` – display command usage of kernel or plugin
@@ -151,7 +136,3 @@ Field highlights:
 - `IKT300.Plugin.EventSimulator`: traffic generator plugin used for local testing.
 - `IKT300.Plugin.MetricLogger`: plugin that logs received events to disk and console.
 - `IKT300.Shared`: shared message schema, configuration types, and helpers.
-
-## Notes
-- Messages are newline-delimited for simplicity; production systems should use robust framing (length-prefix, TLS records, gRPC, HTTP/2, etc.).
-- Kernel monitors plugin processes and restarts them if a heartbeat timeout occurs.
