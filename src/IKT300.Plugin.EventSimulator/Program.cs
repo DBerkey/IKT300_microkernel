@@ -14,51 +14,35 @@ namespace IKT300.Plugin.EventSimulator
     {
         private static async Task<int> Main(string[] args)
         {
-            string? kernelHostOverride = null;
-            int kernelPort = 9000;
-            string pluginId = "EventSimulator";
+            if (ContainsHelpFlag(args))
+            {
+                PrintUsage();
+                return 0;
+            }
+
             int intervalSeconds = 3;
             int sendCount = 0; // 0 = infinite
-            string? configPathOverride = null;
+            int exitAfterSeconds = 0;
+            string kernelHost = "127.0.0.1";
+            int kernelPort = 9000;
+            string pluginId = "EventSimulator";
 
             for (int i = 0; i < args.Length; i++)
             {
                 var a = args[i];
                 switch (a)
                 {
-                    case "--kernelHost":
-                        kernelHostOverride = args[++i];
-                        break;
-                    case "--kernelPort":
-                        kernelPort = int.Parse(args[++i]);
-                        break;
-                    case "--pluginId":
-                        pluginId = args[++i];
-                        break;
                     case "--interval":
                         intervalSeconds = int.Parse(args[++i]);
                         break;
                     case "--count":
                         sendCount = int.Parse(args[++i]);
                         break;
-                    case "--config":
-                        configPathOverride = args[++i];
+                    case "--exitAfterSeconds":
+                        exitAfterSeconds = int.Parse(args[++i]);
                         break;
                 }
             }
-
-            KernelConfig? sharedConfig = null;
-            try
-            {
-                sharedConfig = KernelConfig.LoadFromDefaultLocations(configPathOverride);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Config load warning: {ex.Message}");
-            }
-
-            var kernelHost = kernelHostOverride ?? sharedConfig?.Host ?? "127.0.0.1";
-            kernelPort = kernelPort != 0 ? kernelPort : sharedConfig?.Port ?? 9000;
 
             Console.WriteLine($"EventSimulator connecting to {kernelHost}:{kernelPort} as '{pluginId}' (interval={intervalSeconds}s, count={(sendCount == 0 ? "infinite" : sendCount.ToString())})");
 
@@ -83,6 +67,11 @@ namespace IKT300.Plugin.EventSimulator
 
                 var rnd = new Random();
                 var sent = 0;
+                if (exitAfterSeconds > 0)
+                {
+                    _ = Task.Delay(TimeSpan.FromSeconds(exitAfterSeconds), cts.Token)
+                        .ContinueWith(_ => cts.Cancel(), TaskScheduler.Default);
+                }
                 while (!cts.IsCancellationRequested && (sendCount == 0 || sent < sendCount))
                 {
                     // Alternate: send a UserLoggedInEvent then a DataProcessedEvent
@@ -144,6 +133,30 @@ namespace IKT300.Plugin.EventSimulator
                 Console.Error.WriteLine($"Error: {ex}");
                 return 2;
             }
+        }
+
+        private static bool ContainsHelpFlag(string[] args)
+        {
+            foreach (var arg in args)
+            {
+                if (string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(arg, "-h", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(arg, "help", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void PrintUsage()
+        {
+            Console.WriteLine("EventSimulator plugin options:");
+            Console.WriteLine("  --interval <seconds>     Delay between event payloads (default 3)");
+            Console.WriteLine("  --count <n>              Number of payloads to send (0 = infinite)");
+            Console.WriteLine("  --exitAfterSeconds <seconds>   Stop after the specified number of seconds");
+            Console.WriteLine("  -h | --help              Display this usage information");
         }
 
         private static async Task SendMessage(NetworkStream ns, Message msg, CancellationToken ct)

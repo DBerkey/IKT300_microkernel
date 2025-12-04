@@ -34,12 +34,16 @@ namespace IKT300.Microkernel
             }
 
             var kernel = new KernelServer(config);
+
+            Console.CancelKeyPress += (s, e) =>
+            {
+                e.Cancel = true;
+                _ = kernel.StopAsync();
+            };
+
             await kernel.StartAsync();
-
-            Console.WriteLine("Press Enter to shut down the kernel.");
-            Console.ReadLine();
-
-            await kernel.StopAsync();
+            Console.WriteLine("Kernel running. Type 'exit' or press Ctrl+C to stop.");
+            await kernel.WaitForShutdownAsync();
         }
     }
 
@@ -53,6 +57,8 @@ namespace IKT300.Microkernel
         private readonly TimeSpan _heartbeatTimeout = TimeSpan.FromSeconds(8);
         private readonly object _heartbeatLogLock = new object();
         private readonly string _heartbeatLogPath;
+        private readonly TaskCompletionSource<object?> _shutdownTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _stopped;
 
         public KernelServer(KernelConfig config)
         {
@@ -60,6 +66,11 @@ namespace IKT300.Microkernel
             _pluginConfigs = _config.Plugins
                 .Where(p => !string.IsNullOrWhiteSpace(p.PluginId))
                 .ToDictionary(p => p.PluginId, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var pluginId in _pluginConfigs.Keys)
+            {
+                _plugins.TryAdd(pluginId, new PluginInstance(pluginId, process: null));
+            }
 
             var logDirectory = _config.ConfigDirectory ?? Directory.GetCurrentDirectory();
             _heartbeatLogPath = Path.Combine(logDirectory, "kernel-heartbeats.log");
@@ -75,32 +86,48 @@ namespace IKT300.Microkernel
             Console.WriteLine($"Kernel listening on {address}:{_config.Port}");
         }
 
-        public async Task StartAsync()
+        public Task StartAsync()
         {
             _listener.Start();
             _ = Task.Run(AcceptLoopAsync);
             _ = Task.Run(HeartbeatMonitorLoop);
             Console.WriteLine("Kernel started.");
 
-            foreach (var plugin in _pluginConfigs.Values.Where(p => p.Enabled))
+            foreach (var plugin in _pluginConfigs.Values.Where(p => p.Enabled && p.AutoStart))
             {
                 StartPluginProcess(plugin.PluginId);
             }
             _ = Task.Run(CommandLoopAsync);
+
+            return Task.CompletedTask;
         }
 
         public Task StopAsync()
         {
+            if (Interlocked.Exchange(ref _stopped, 1) == 1)
+            {
+                return _shutdownTcs.Task;
+            }
+
             _cts.Cancel();
             foreach (var p in _plugins.Values)
             {
                 p.Kill();
             }
-            _listener.Stop();
+
+            try
+            {
+                _listener.Stop();
+            }
+            catch (Exception) { }
+
+            _shutdownTcs.TrySetResult(null);
             return Task.CompletedTask;
         }
 
-        private void StartPluginProcess(string pluginId)
+        public Task WaitForShutdownAsync() => _shutdownTcs.Task;
+
+        private void StartPluginProcess(string pluginId, string? extraArgs = null)
         {
             if (!_pluginConfigs.TryGetValue(pluginId, out var pluginConfig))
             {
@@ -110,7 +137,7 @@ namespace IKT300.Microkernel
 
             try
             {
-                var psi = CreatePluginStartInfo(pluginConfig);
+                var psi = CreatePluginStartInfo(pluginConfig, extraArgs);
                 Console.WriteLine($"Starting plugin {pluginId}");
                 var process = new Process { StartInfo = psi };
                 process.OutputDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId}] {e.Data}"); };
@@ -129,7 +156,12 @@ namespace IKT300.Microkernel
             }
         }
 
-        private ProcessStartInfo CreatePluginStartInfo(PluginConfig pluginConfig)
+        private ProcessStartInfo CreatePluginStartInfo(
+            PluginConfig pluginConfig,
+            string? extraArgs = null,
+            bool includeKernelArgs = true,
+            bool forceDotnetRun = false,
+            bool skipBuild = false)
         {
             var workingDir = ResolvePath(pluginConfig.WorkingDirectory);
             if (!Directory.Exists(workingDir))
@@ -137,13 +169,20 @@ namespace IKT300.Microkernel
                 throw new DirectoryNotFoundException($"Plugin directory not found: {workingDir}");
             }
 
-            var compiledDll = ResolveCompiledDllPath(pluginConfig, workingDir);
-            var hasCompiledDll = compiledDll is not null && File.Exists(compiledDll);
+            string? compiledDll = null;
+            var hasCompiledDll = false;
+            if (!forceDotnetRun)
+            {
+                compiledDll = ResolveCompiledDllPath(pluginConfig, workingDir);
+                hasCompiledDll = compiledDll is not null && File.Exists(compiledDll);
+            }
 
             var configArg = string.IsNullOrWhiteSpace(_config.ConfigPath)
                 ? string.Empty
                 : $" --config \"{_config.ConfigPath}\"";
-            var commonArgs = $"--kernelHost {_config.Host} --kernelPort {_config.Port} --pluginId {pluginConfig.PluginId} --exitAfterSeconds {pluginConfig.ExitAfterSeconds}{configArg}";
+            var commonArgs = includeKernelArgs
+                ? $"--kernelHost {_config.Host} --kernelPort {_config.Port} --pluginId {pluginConfig.PluginId} --exitAfterSeconds {pluginConfig.ExitAfterSeconds}{configArg}"
+                : string.Empty;
 
             var psi = new ProcessStartInfo
             {
@@ -153,12 +192,10 @@ namespace IKT300.Microkernel
                 RedirectStandardError = true,
                 CreateNoWindow = true,
                 WorkingDirectory = workingDir,
-                Arguments = hasCompiledDll
-                    ? $"\"{compiledDll}\" {commonArgs}"
-                    : $"run --project \"{workingDir}\" -- {commonArgs}"
+                Arguments = BuildArguments(compiledDll, hasCompiledDll, workingDir, MergeArgs(commonArgs, extraArgs), skipBuild)
             };
 
-            if (!hasCompiledDll)
+            if (!hasCompiledDll && !forceDotnetRun)
             {
                 var message = compiledDll is not null
                     ? $"Compiled plugin not found at {compiledDll}."
@@ -167,6 +204,45 @@ namespace IKT300.Microkernel
             }
 
             return psi;
+        }
+
+        private static string BuildArguments(string? compiledDll, bool hasCompiledDll, string workingDir, string mergedArgs, bool skipBuild)
+        {
+            if (hasCompiledDll && compiledDll is not null)
+            {
+                return string.IsNullOrWhiteSpace(mergedArgs)
+                    ? $"\"{compiledDll}\""
+                    : $"\"{compiledDll}\" {mergedArgs}";
+            }
+
+            var builder = new StringBuilder();
+            builder.Append("run --project \"").Append(workingDir).Append("\"");
+            if (skipBuild)
+            {
+                builder.Append(" --no-build");
+            }
+
+            if (!string.IsNullOrWhiteSpace(mergedArgs))
+            {
+                builder.Append(" -- ").Append(mergedArgs);
+            }
+
+            return builder.ToString();
+        }
+
+        private static string MergeArgs(string commonArgs, string? extraArgs)
+        {
+            if (string.IsNullOrWhiteSpace(extraArgs))
+            {
+                return commonArgs.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(commonArgs))
+            {
+                return extraArgs.Trim();
+            }
+
+            return $"{commonArgs.Trim()} {extraArgs.Trim()}";
         }
 
         private string? ResolveCompiledDllPath(PluginConfig pluginConfig, string workingDir)
@@ -450,12 +526,20 @@ namespace IKT300.Microkernel
                 {
                     var id = kv.Key;
                     var inst = kv.Value;
+                    var shouldAutoRestart = ShouldAutoStart(id);
                     if (inst.Process is not null && !inst.Process.HasExited)
                     {
                         if (inst.LastReceived + _heartbeatTimeout < now)
                         {
-                            Console.WriteLine($"Plugin {id} missed heartbeat. Restarting plugin...");
-                            await RestartPluginAsync(id, inst);
+                            if (shouldAutoRestart)
+                            {
+                                Console.WriteLine($"Plugin {id} missed heartbeat. Restarting plugin...");
+                                await RestartPluginAsync(id, inst);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Plugin {id} missed heartbeat but autoStart is disabled; not restarting.");
+                            }
                         }
                     }
                     else
@@ -463,8 +547,17 @@ namespace IKT300.Microkernel
                         // plugin has no process or process exited: try to restart
                         if (inst.Process is not null && inst.Process.HasExited)
                         {
-                            Console.WriteLine($"Process for plugin {id} has exited. Restarting...");
-                            _ = Task.Run(() => StartPluginProcess(id));
+                            if (shouldAutoRestart)
+                            {
+                                Console.WriteLine($"Process for plugin {id} has exited. Restarting...");
+                                _ = Task.Run(() => StartPluginProcess(id));
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Process for plugin {id} has exited; autoStart disabled so kernel will not restart it.");
+                                inst.Process = null;
+                                inst.Connected = false;
+                            }
                         }
                     }
                 }
@@ -475,7 +568,7 @@ namespace IKT300.Microkernel
 
         private async Task CommandLoopAsync()
         {
-            Console.WriteLine("Commands: list | kill <pluginId> | start <pluginId>");
+            PrintHelp();
             while (!_cts.IsCancellationRequested)
             {
                 var line = await Console.In.ReadLineAsync();
@@ -485,6 +578,21 @@ namespace IKT300.Microkernel
                 var arg = parts.Length > 1 ? parts[1] : string.Empty;
                 switch (cmd)
                 {
+                    case "help":
+                    case "?":
+                    {
+                        if (string.IsNullOrWhiteSpace(arg))
+                        {
+                            PrintHelp();
+                            break;
+                        }
+
+                        var helpParts = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        var helpTarget = helpParts[0];
+                        var helpArgs = helpParts.Length > 1 ? helpParts[1] : null;
+                        await ShowPluginHelpAsync(helpTarget, helpArgs);
+                        break;
+                    }
                     case "list":
                         foreach (var kv in _plugins)
                         {
@@ -502,18 +610,41 @@ namespace IKT300.Microkernel
                     case "start":
                         if (string.IsNullOrWhiteSpace(arg))
                         {
-                            Console.WriteLine("Usage: start <pluginId>");
+                            Console.WriteLine("Usage: start <pluginId> [extra args]");
                             break;
                         }
 
-                        if (!_pluginConfigs.ContainsKey(arg))
+                        var startParts = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        var requestedId = startParts[0];
+                        var extraArgs = startParts.Length > 1 ? startParts[1] : null;
+
+                        if (!_pluginConfigs.TryGetValue(requestedId, out _))
                         {
-                            Console.WriteLine($"Unknown plugin '{arg}'. Known plugins: {string.Join(", ", _pluginConfigs.Keys)}");
+                            Console.WriteLine($"Unknown plugin '{requestedId}'. Known plugins: {string.Join(", ", _pluginConfigs.Keys)}");
                             break;
                         }
 
-                        if (!_plugins.ContainsKey(arg)) StartPluginProcess(arg);
-                        else Console.WriteLine($"Plugin {arg} exists; use kill to restart.");
+                        if (_plugins.TryGetValue(requestedId, out var existing) && existing.Process is { HasExited: false })
+                        {
+                            Console.WriteLine($"Plugin {requestedId} is already running (pid={existing.Process.Id}). Use kill <pluginId> to restart.");
+                            break;
+                        }
+
+                        StartPluginProcess(requestedId, extraArgs);
+                        break;
+                    case "exit":
+                    case "quit":
+                    case "shutdown":
+                        Console.WriteLine("Stopping kernel...");
+                        await StopAsync();
+                        return;
+                    default:
+                        if (await HandlePluginShortcutAsync(cmd, arg))
+                        {
+                            break;
+                        }
+
+                        Console.WriteLine($"Unknown command '{cmd}'. Type 'help' for available commands.");
                         break;
                 }
             }
@@ -542,13 +673,93 @@ namespace IKT300.Microkernel
             // Start new plugin instance
             if (_pluginConfigs.ContainsKey(id))
             {
-                StartPluginProcess(id);
+                if (ShouldAutoStart(id))
+                {
+                    StartPluginProcess(id);
+                }
+                else
+                {
+                    Console.WriteLine($"AutoStart disabled for {id}; plugin will remain stopped.");
+                }
             }
             else
             {
                 Console.WriteLine($"Cannot restart plugin {id}: no configuration found.");
             }
             return Task.CompletedTask;
+        }
+
+        private bool ShouldAutoStart(string pluginId)
+            => _pluginConfigs.TryGetValue(pluginId, out var cfg) && cfg.AutoStart;
+
+        private void PrintHelp()
+        {
+            Console.WriteLine("Commands: help [pluginId [args]] | list | kill <pluginId> | start <pluginId> [args] | exit");
+            Console.WriteLine("  help                 Show this summary or run a plugin with help args (default --help)");
+            Console.WriteLine("  list                 Show registered plugins and their state");
+            Console.WriteLine("  kill <pluginId>      Terminate a running plugin process");
+            Console.WriteLine("  start <pluginId> [args]  Launch a plugin (extra args appended to plugin CLI)");
+            Console.WriteLine("  exit                 Gracefully stop the kernel (Ctrl+C also works)");
+        }
+
+        private async Task<bool> HandlePluginShortcutAsync(string command, string? remainder)
+        {
+            if (!_pluginConfigs.ContainsKey(command))
+            {
+                return false;
+            }
+
+            if (LooksLikeHelpArgument(remainder))
+            {
+                await ShowPluginHelpAsync(command, remainder);
+                return true;
+            }
+
+            Console.WriteLine($"Plugin '{command}' is known. Use 'start {command}' to run it or 'help {command}' for options.");
+            return true;
+        }
+
+        private static bool LooksLikeHelpArgument(string? arg)
+        {
+            if (string.IsNullOrWhiteSpace(arg)) return false;
+            var token = arg.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries)[0];
+            return token.Equals("-h", StringComparison.OrdinalIgnoreCase)
+                   || token.Equals("--help", StringComparison.OrdinalIgnoreCase)
+                   || token.Equals("help", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private async Task ShowPluginHelpAsync(string pluginId, string? helpArgs)
+        {
+            if (!_pluginConfigs.TryGetValue(pluginId, out var pluginConfig))
+            {
+                Console.WriteLine($"Unknown plugin '{pluginId}'. Known plugins: {string.Join(", ", _pluginConfigs.Keys)}");
+                return;
+            }
+
+            var argsToUse = string.IsNullOrWhiteSpace(helpArgs) ? "--help" : helpArgs;
+
+            try
+            {
+                var psi = CreatePluginStartInfo(pluginConfig, argsToUse, includeKernelArgs: false, forceDotnetRun: true, skipBuild: true);
+                using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+                process.OutputDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId} help] {e.Data}"); };
+                process.ErrorDataReceived += (s, e) => { if (e.Data is not null) Console.WriteLine($"[Plugin:{pluginId} help ERR] {e.Data}"); };
+
+                if (!process.Start())
+                {
+                    Console.WriteLine($"Failed to launch help for {pluginId}.");
+                    return;
+                }
+
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                await Task.Run(process.WaitForExit);
+                Console.WriteLine($"Plugin {pluginId} help exited with code {process.ExitCode}.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to show help for {pluginId}: {ex.Message}");
+            }
         }
     }
 

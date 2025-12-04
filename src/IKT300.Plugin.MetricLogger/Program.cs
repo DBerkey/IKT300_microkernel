@@ -19,6 +19,12 @@ namespace IKT300.Plugin.MetricLogger
 
         private static async Task<int> Main(string[] args)
         {
+            if (ContainsHelpFlag(args))
+            {
+                PrintUsage();
+                return 0;
+            }
+
             string? kernelHostOverride = null;
             int? kernelPortOverride = null;
             int? exitAfterSecondsOverride = null;
@@ -85,7 +91,7 @@ namespace IKT300.Plugin.MetricLogger
                 handshake.Payload = JsonSerializer.SerializeToElement(new { Name = "MetricLogger", Version = "0.1" });
                 await SendMessage(ns, handshake, cts.Token);
 
-                // Start read loop and heartbeat loop � both run until cancellation.
+                // Start read loop and heartbeat loop both run until cancellation.
                 var readTask = Task.Run(() => ReadLoop(ns, pluginId, cts.Token));
                 var hbTask = Task.Run(() => HeartbeatLoop(ns, pluginId, cts.Token));
 
@@ -109,6 +115,28 @@ namespace IKT300.Plugin.MetricLogger
                 Console.Error.WriteLine($"Unhandled exception: {ex}");
                 return 2;
             }
+        }
+
+        private static bool ContainsHelpFlag(string[] args)
+        {
+            foreach (var arg in args)
+            {
+                if (string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(arg, "-h", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(arg, "help", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void PrintUsage()
+        {
+            Console.WriteLine("MetricLogger plugin options:");
+            Console.WriteLine("  --exitAfterSeconds <n>   Stop after the specified number of seconds (0 = run indefinitely)");
+            Console.WriteLine("  -h | --help              Display this usage information");
         }
 
         private static async Task SendMessage(NetworkStream ns, Message msg, CancellationToken ct)
