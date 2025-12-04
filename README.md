@@ -70,7 +70,7 @@ The kernel reads `kernelconfig.json`, opens the configured TCP endpoint (default
 - `exit` / `quit` – gracefully stop the kernel (Ctrl+C also works)
 
 ### Run Event Simulator
-The simulator plugin generates `UserLoggedInEvent`/`DataProcessedEvent` traffic and heartbeats so the kernel and MetricLogger can be tested together.
+The simulator plugin generates `UserLoggedInEvent`/`DataProcessedEvent` traffic and heartbeats so the kernel and MetricLogger can be tested together. This only works if the EventSimulator was build in the earlier step.
 
 From the kernel console:
 
