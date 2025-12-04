@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -133,6 +134,11 @@ namespace IKT300.Plugin.EventSimulator
                 Console.WriteLine("Canceled.");
                 return 0;
             }
+            catch (ConnectionClosedException ex)
+            {
+                Console.WriteLine($"Connection closed by kernel: {ex.Message}");
+                return 1;
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"Error: {ex}");
@@ -144,8 +150,15 @@ namespace IKT300.Plugin.EventSimulator
         {
             var json = JsonSerializer.Serialize(msg);
             var bytes = Encoding.UTF8.GetBytes(json + "\n");
-            await ns.WriteAsync(bytes, 0, bytes.Length, ct).ConfigureAwait(false);
-            await ns.FlushAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await ns.WriteAsync(bytes, 0, bytes.Length, ct).ConfigureAwait(false);
+                await ns.FlushAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsRemoteSocketClosed(ex))
+            {
+                throw new ConnectionClosedException(ex.Message, ex);
+            }
         }
 
         private static async Task HeartbeatLoop(NetworkStream ns, string pluginId, CancellationToken ct)
@@ -164,6 +177,11 @@ namespace IKT300.Plugin.EventSimulator
                     await SendMessage(ns, hb, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { break; }
+                catch (ConnectionClosedException)
+                {
+                    Console.WriteLine("Heartbeat loop stopped: kernel connection closed.");
+                    break;
+                }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Heartbeat send failed: {ex.Message}");
@@ -172,6 +190,31 @@ namespace IKT300.Plugin.EventSimulator
 
                 try { await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { break; }
+            }
+        }
+
+        private static bool IsRemoteSocketClosed(Exception ex)
+        {
+            return ex switch
+            {
+                IOException ioEx when ioEx.InnerException is SocketException sock => IsSocketClosed(sock),
+                SocketException sockEx => IsSocketClosed(sockEx),
+                _ => false
+            };
+        }
+
+        private static bool IsSocketClosed(SocketException sock)
+        {
+            return sock.SocketErrorCode == SocketError.ConnectionReset
+                   || sock.SocketErrorCode == SocketError.ConnectionAborted
+                   || sock.SocketErrorCode == SocketError.Shutdown;
+        }
+
+        private sealed class ConnectionClosedException : Exception
+        {
+            public ConnectionClosedException(string message, Exception inner)
+                : base(message, inner)
+            {
             }
         }
     }
