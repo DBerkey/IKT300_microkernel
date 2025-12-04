@@ -5,10 +5,6 @@
     {
         "pluginId": "MetricLogger",
         "workingDirectory" : "IKT300.Plugin.MetricLogger"
-    },
-    {
-        "pluginId": "UserWatcher",
-        "workingDirectory" : "IKT300.Plugin.UserWatcher"
     }
   ]
 }

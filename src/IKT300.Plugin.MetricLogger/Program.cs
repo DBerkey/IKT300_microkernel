@@ -85,7 +85,7 @@ namespace IKT300.Plugin.MetricLogger
                 handshake.Payload = JsonSerializer.SerializeToElement(new { Name = "MetricLogger", Version = "0.1" });
                 await SendMessage(ns, handshake, cts.Token);
 
-                // Start read loop and heartbeat loop — both run until cancellation.
+                // Start read loop and heartbeat loop ï¿½ both run until cancellation.
                 var readTask = Task.Run(() => ReadLoop(ns, pluginId, cts.Token));
                 var hbTask = Task.Run(() => HeartbeatLoop(ns, pluginId, cts.Token));
 
@@ -194,7 +194,7 @@ namespace IKT300.Plugin.MetricLogger
                     try
                     {
                         var ev = obj.Deserialize<UserLoggedInEvent>();
-                        if ev is not null) HandleUserLoggedIn(ev, sender);
+                        if (ev is not null) HandleUserLoggedIn(ev, sender);
                     }
                     catch (Exception ex)
                     {

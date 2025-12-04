@@ -6,7 +6,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IKT300.Shared", "..\IKT300.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IKT300.Microkernel", "..\IKT300.Microkernel\IKT300.Microkernel.csproj", "{8D4C06F4-E2E7-42EF-9F38-EBB0E3C5F7DA}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IKT300.Plugin.Sample", "..\IKT300.Plugin.Sample\IKT300.Plugin.Sample.csproj", "{F270C0C0-4922-4F9A-9F5B-A06D83AD6A56}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IKT300.Plugin.MetricLogger", "..\IKT300.Plugin.MetricLogger\IKT300.Plugin.MetricLogger.csproj", "{F270C0C0-4922-4F9A-9F5B-A06D83AD6A56}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
