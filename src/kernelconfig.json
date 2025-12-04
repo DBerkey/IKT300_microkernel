@@ -3,8 +3,12 @@
   "port": 9000,
   "plugins": [
     {
-      "pluginId": "SamplePlugin",
-      "workingDirectory": "IKT300.Plugin.Sample"
+        "pluginId": "MetricLogger",
+        "workingDirectory" : "IKT300.Plugin.MetricLogger"
+    },
+    {
+        "pluginId": "UserWatcher",
+        "workingDirectory" : "IKT300.Plugin.UserWatcher"
     }
   ]
 }

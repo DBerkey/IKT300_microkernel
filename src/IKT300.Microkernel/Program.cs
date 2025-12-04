@@ -348,14 +348,31 @@ namespace IKT300.Microkernel
             var pluginId = message.Metadata.PluginId;
             if (string.IsNullOrEmpty(pluginId)) return;
 
+            // register connection for this pluginId if not already registered
             if (!_plugins.TryGetValue(pluginId, out var plugin))
             {
-                // Unknown plugin, register connection if there is a process for it
                 plugin = new PluginInstance(pluginId, null) { Connection = client };
                 _plugins[pluginId] = plugin;
             }
+            else
+            {
+                // update connection reference if missing
+                if (plugin.Connection is null && client != null)
+                {
+                    plugin.Connection = client;
+                }
+            }
 
             plugin.LastReceived = DateTime.UtcNow;
+
+            // If this is an event (CommandRequest) broadcast it to other plugins.
+            if (string.Equals(message.Header.MessageType, MessageTypes.CommandRequest, StringComparison.OrdinalIgnoreCase))
+            {
+                // preserve original sender in Metadata.Sender for receivers
+                message.Metadata.Sender = pluginId;
+                _ = Task.Run(() => BroadcastToPluginsAsync(message, excludePluginId: pluginId));
+                Console.WriteLine($"Broadcasting CommandRequest from {pluginId} to other plugins.");
+            }
 
             switch (message.Header.MessageType)
             {
@@ -374,7 +391,7 @@ namespace IKT300.Microkernel
                     break;
                 case MessageTypes.CommandRequest:
                     Console.WriteLine($"CommandRequest from {pluginId}");
-                    // handle plugin request if needed
+                    // keep handling minimal in kernel
                     break;
                 default:
                     Console.WriteLine($"Unknown message type {message.Header.MessageType} from {pluginId}");
@@ -387,6 +404,41 @@ namespace IKT300.Microkernel
             var json = JsonSerializer.Serialize(msg);
             var bytes = Encoding.UTF8.GetBytes(json + "\n");
             await ns.WriteAsync(bytes, 0, bytes.Length);
+        }
+
+        // Broadcast a message (JSON) to all connected plugin TcpClients except an optional excludePluginId.
+        private async Task BroadcastToPluginsAsync(Message msg, string? excludePluginId = null)
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(msg) + "\n";
+                var bytes = Encoding.UTF8.GetBytes(json);
+
+                foreach (var kv in _plugins)
+                {
+                    var targetId = kv.Key;
+                    if (string.Equals(targetId, excludePluginId, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    var inst = kv.Value;
+                    try
+                    {
+                        if (inst.Connection?.Connected == true)
+                        {
+                            var stream = inst.Connection.GetStream();
+                            await stream.WriteAsync(bytes, 0, bytes.Length);
+                            await stream.FlushAsync();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to forward message to {targetId}: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Broadcast error: {ex.Message}");
+            }
         }
 
         private async Task HeartbeatMonitorLoop()
