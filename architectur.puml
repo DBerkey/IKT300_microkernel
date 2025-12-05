@@ -1,71 +1,99 @@
 
 @startuml
-title IKT300 Microkernel - Implemented Components
+title IKT300 Microkernel - Runtime Architecture
 
 skinparam packageStyle rectangle
+skinparam shadowing false
 
-package "Kernel Process" {
-    [Program.cs\n(entry point)] as Main
-    [KernelServer\n(connection + orchestration)] as Kernel
-    [PluginRegistry\n(config + status cache)] as Registry
-    [ProcessLauncher\n(dotnet exec/run)] as Launcher
-    [CommandConsole\n(list/kill/start)] as ConsoleUI
-    [HeartbeatMonitor\n(timeout + restart)] as Monitor
-    [MessageHandler\n(handshake/heartbeat)] as Handler
-    [HeartbeatLog\nkernel-heartbeats.log] as HBLog
+package "Microkernel Host (IKT300.Microkernel)" {
+    [Program.cs\nEntry point] as Entry
+    [KernelServer\nLifetime + background tasks] as Kernel
+    [PluginRegistry\nConcurrentDictionary<PluginInstance>] as Registry
+    [PluginProcessManager\nCreatePluginStartInfo + dotnet exec/run] as ProcessMgr
+    [MessageRouter\nAcceptLoop + ProcessMessage + Broadcast] as Router
+    [HeartbeatMonitor\n8s timeout + restart] as HBMonitor
+    [CommandLoop\nConsole CLI (list/kill/start/help)] as CommandUI
+    database "kernel-heartbeats.log" as HBLog
+}
+
+package "Shared Library (IKT300.Shared)" {
+    [KernelConfig\n+ PluginConfig] as SharedConfig
+    [Message Schema\nHeader + Metadata + Payload] as MessageSchema
+    [Domain Events\nUserLoggedInEvent + DataProcessedEvent] as DomainEvents
+}
+
+package "Configuration" {
+    artifact "kernelconfig.json\n(host, port, plugins)" as ConfigFile
 }
 
 package "IPC Layer" {
-    [TcpListener\n(net8.0)] as Listener
-    [NetworkStream] as Stream
-    [System.Text.Json\nnewline framing] as Serializer
+    [TcpListener\n127.0.0.1:9000] as Listener
+    [NetworkStream\nper plugin connection] as Stream
+    [System.Text.Json\nnewline framed messages] as JsonCodec
 }
 
-package "Plugins" {
-    [SamplePlugin\n(Program.cs)] as Sample
-    [Other configured plugin] as OtherPlugin
+package "Plugins (net8.0)" {
+    component EventSim as "[IKT300.Plugin.EventSimulator\nproducer]"
+    component MetricLogger as "[IKT300.Plugin.MetricLogger\nconsumer]"
+    database "metriclogger-metrics.log" as MetricsLog
 }
 
-package "Shared Library" {
-    [KernelConfig\n(incl. PluginConfig)] as Config
-    [Message Schema\nHeader/Metadata/Payload] as Message
-}
+Entry --> SharedConfig : LoadFromDefaultLocations()
+ConfigFile --> SharedConfig : JSON source
+Entry --> Kernel : new KernelServer(config)
 
-Main --> Config : Load settings
-Main --> Kernel : StartAsync()
-Kernel --> Registry : Track enabled plugins
-Kernel --> Launcher : StartPluginProcess()
-Kernel --> Monitor : Start heartbeat loop
-Kernel --> ConsoleUI : Start CommandLoop()
-Kernel --> Handler : ProcessMessageAsync()
-Kernel --> HBLog : LogHeartbeat()
+Kernel --> Registry : Register PluginInstance
+Kernel --> ProcessMgr : StartPluginProcess()
+Kernel --> Router : Start AcceptLoop
+Kernel --> HBMonitor : Start heartbeat task
+Kernel --> CommandUI : Start console loop
 
-Kernel --> Listener : Begin AcceptLoop()
+ProcessMgr --> SharedConfig : Use PluginConfig paths
+ProcessMgr --> EventSim : dotnet run/exec
+ProcessMgr --> MetricLogger : dotnet run/exec
+
+Router --> Listener : Listen()
 Listener --> Stream : Accept TcpClient
-Stream --> Handler : Deliver JSON message
-Handler --> Registry : Update last seen
-Monitor --> Launcher : Restart missing plugin
+Stream --> Router : Deliver NetworkStream
+Router --> JsonCodec : Serialize/Deserialize Message
+EventSim --> Stream : TcpClient + JSON
+MetricLogger --> Stream : TcpClient + JSON
 
-Sample --> Listener : TCP connect
-Sample --> Message : Serialize handshake/heartbeat
-Sample --> Config : Optional overrides
-Sample --> Kernel : Handshake + heartbeats
+EventSim --> MessageSchema : Handshake + Heartbeat + CommandRequest
+MetricLogger --> MessageSchema : Handshake + Heartbeat + CommandRequest
+EventSim --> DomainEvents : Produce payloads
+MetricLogger --> DomainEvents : Deserialize payloads
 
-OtherPlugin .. Sample : follows same contract
+Router --> Registry : Update connection + LastReceived
+Router --> HBLog : LogHeartbeat(pluginId, seq)
+Router --> MessageSchema : Wrap + inspect metadata
+Router --> MetricLogger : Broadcast CommandRequest
+EventSim --> Router : Handshake/Heartbeat/User events
 
-Config --> Launcher : workingDirectory + dll path
-Message --> Handler : deserialize + route
+HBMonitor --> Registry : Inspect LastReceived
+HBMonitor --> ProcessMgr : Restart missing plugin
+CommandUI --> Registry : list status
+CommandUI --> ProcessMgr : start/kill plugin
 
-note right of Monitor
-Missed heartbeat =>
-kill process + relaunch
+MetricLogger --> MetricsLog : Append counters
+SharedConfig --> MetricLogger : Host/port overrides
+
+note right of EventSim
+- Sends handshake once on connect
+- Emits heartbeats every 2s
+- Alternates UserLoggedInEvent and DataProcessedEvent payloads
 end note
 
-note bottom of Listener
-Plain TCP + newline
-framing (TLS not yet implemented)
+note right of MetricLogger
+- Subscribes to CommandRequest broadcast
+- Counts events per type and writes metriclogger-metrics.log
+- Supports exitAfterSeconds + kernel overrides
+end note
+
+note bottom of Router
+Broadcast keeps Metadata.Sender so receivers know origin
+Simple newline framing; TLS not implemented yet
 end note
 
 @enduml
-Message Format: JSON (future: Protobuf)
 
