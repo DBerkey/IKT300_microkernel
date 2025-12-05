@@ -112,6 +112,7 @@ namespace IKT300.Shared.Configuration
         public string WorkingDirectory { get; set; } = string.Empty;
         public string? DllRelativePath { get; set; }
         public bool Enabled { get; set; } = true;
+        public bool AutoStart { get; set; } = true;
         public int ExitAfterSeconds { get; set; } = 0;
 
         [JsonIgnore]

@@ -44,30 +44,102 @@ Messages are newline-delimited JSON objects sent over TCP.
 
 ### Prerequisites
 - .NET SDK 8.0: <https://dotnet.microsoft.com/en-us/download/dotnet/8.0>
+- Windows PowerShell 5.1 or any shell capable of running the .NET CLI commands below.
 
 ### Build
+Typical local workflow from the repo root:
+
 ```powershell
-cd .\src\IKT300.Solution
-dotnet build ..\IKT300.Microkernel\IKT300.Microkernel.csproj
-dotnet build ..\IKT300.Plugin.Sample\IKT300.Plugin.Sample.csproj
+# Restore and compile every project
+dotnet build src/IKT300.Solution/IKT300.sln
+
+# Build for the event simulator for testing the working of the logger
+dotnet build src/IKT300.Plugin.EventSimulator/IKT300.Plugin.EventSimulator.csproj
 ```
 
-### Run Kernel (auto-starts sample plugin)
+### Run Microkernel
 ```powershell
-cd ..\IKT300.Microkernel
-dotnet run --project .\IKT300.Microkernel.csproj
+dotnet run --project src/IKT300.Microkernel/IKT300.Microkernel.csproj
 ```
+
+The kernel reads `kernelconfig.json`, opens the configured TCP endpoint (default `127.0.0.1:9000`), and supervises plugins defined in that configuration. While running, the console accepts:
+- `help [pluginId]` –  display command usage of kernel or plugin
+- `list` – show known plugins and last heartbeat
+- `kill <pluginId>` – stop a plugin process
+- `start <pluginId> [args]` – start or restart a plugin, appending any extra CLI args after the kernel-injected defaults
+- `exit` / `quit` – gracefully stop the kernel (Ctrl+C also works)
+
+### Run Event Simulator
+The simulator plugin generates `UserLoggedInEvent`/`DataProcessedEvent` traffic and heartbeats so the kernel and MetricLogger can be tested together. This only works if the EventSimulator was build in the earlier step.
+
+From the kernel console:
+
+```powershell
+start EventSimulator --count 5 --interval 2
+```
+
+View simulator help via `help EventSimulator` or `EventSimulator -h` when the kernel is running.
+
+Flags (all optional):
+- `--interval <seconds>` – delay between payload types (default 3)
+- `--count <n>` – total messages before exiting (0 ⇒ infinite)
+- `--exitAfterSeconds <n>` – stop after the specified number of seconds, regardless of count
+
+### Run Metric Logger
+The MetricLogger plugin consumes simulator events and writes structured rows to `metrics/metrics.log`.
+
+```powershell
+start MetricLogger
+```
+
+View MetricLogger help with `help MetricLogger` or `MetricLogger -h` when the kernel is running.
+
+Useful flag:
+- `--exitAfterSeconds <n>` – stop after the specified number of seconds
 
 ### Kernel Console Commands
+- `help [pluginId]` – display command usage of kernel or plugin
 - `list` – show registered plugins and status
 - `kill <pluginId>` – terminate plugin process (kernel may restart it)
-- `start <pluginId>` – start plugin if not running
+- `start <pluginId> [args]` – start plugin if not running, optionally appending custom CLI args
+- `exit` / `quit` – gracefully stop the kernel (Ctrl+C also works)
+
+### Kernel Configuration
+`src/kernelconfig.json` controls the kernel endpoint and plugin catalog. Example:
+
+```json
+{
+	"host": "127.0.0.1",
+	"port": 9000,
+	"plugins": [
+		{
+			"pluginId": "MetricLogger",
+			"workingDirectory": "IKT300.Plugin.MetricLogger",
+			"autoStart": true
+		},
+		{
+			"pluginId": "EventSimulator",
+			"workingDirectory": "IKT300.Plugin.EventSimulator",
+			"autoStart": false
+		}
+	]
+}
+```
+
+Field highlights:
+- `workingDirectory` – relative or absolute path to the plugin project/dll folder.
+- `autoStart` – when `true` the kernel launches (and auto-restarts) the plugin on startup; when `false` the kernel leaves it stopped unless you issue `start <pluginId>`.
+- `pluginId` – identifier used in kernel commands and metadata.
 
 ## Repository Structure
-- `IKT300.Microkernel`: kernel process handling TCP connections, heartbeats, restart policy.
-- `IKT300.Plugin.Sample`: sample plugin connecting to kernel and emitting heartbeats.
-- `IKT300.Shared`: shared message schema and configuration utilities.
+- `IKT300.Microkernel`: kernel host managing TCP connections, heartbeats, and plugin lifecycles.
+- `IKT300.Plugin.EventSimulator`: traffic generator plugin used for local testing.
+- `IKT300.Plugin.MetricLogger`: plugin that logs received events to disk and console.
+- `IKT300.Shared`: shared message schema, configuration types, and helpers.
 
-## Notes
-- Messages are newline-delimited for simplicity; production systems should use robust framing (length-prefix, TLS records, gRPC, HTTP/2, etc.).
-- Kernel monitors plugin processes and restarts them if a heartbeat timeout occurs.
+# Credits
+
+This code was made for the microkernel assignment for IKT300 at the UIA and by Julien Bailleul, Douwe Berkeij, Mathieu Bour, Achilles Papin.
+
+### AI usage
+To make the developmet more fluent there was made use of Github copilot GPT 5.1 codex (preview) for generating documentation, bug fixing and line completion. No full pieces of code were generated with Github copilot GPT 5.1 codex (preview). Futher there was also made use of Gemini 3 for suport in writing the report and making the UML. 
