@@ -139,7 +139,7 @@ Field highlights:
 
 # Credits
 
-This code was made for the microkernel assignment for IKT300 at the UIA and by Julien Bailleul, Douwe Berkeij, Mathieu Bour, Achilles Papin.
+This code was made for the microkernel assignment for IKT300 at the UIA and by Julien Bailleul, Douwe Berkeij, Mathieu Bour, Achille Papin.
 
 ### AI usage
 To make the developmet more fluent there was made use of Github copilot GPT 5.1 codex (preview) for generating documentation, bug fixing and line completion. No full pieces of code were generated with Github copilot GPT 5.1 codex (preview). Futher there was also made use of Gemini 3 for suport in writing the report and making the UML. 
