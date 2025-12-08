@@ -1,0 +1,124 @@
+@startuml IKT300_ClassDiagram
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+skinparam ranksep 25
+skinparam nodesep 25
+left to right direction
+
+package Kernel {
+    class "IKT300.Microkernel.Program" as ProgramKernel {
+        +Main(args)
+    }
+
+    class KernelServer {
+        -KernelConfig _config
+        -ConcurrentDictionary<string, PluginInstance> _plugins
+        +StartAsync()
+        +StopAsync()
+        +BroadcastToPluginsAsync(Message)
+    }
+
+    class PluginInstance {
+        +string PluginId
+        +Process? Process
+        +TcpClient? Connection
+        +bool Connected
+        +DateTime LastReceived
+        +Kill()
+    }
+}
+
+package Configuration {
+    class KernelConfig {
+        +string Host
+        +int Port
+        +List<PluginConfig> Plugins
+        +Load(path)
+        +LoadFromDefaultLocations()
+    }
+
+    class PluginConfig {
+        +string PluginId
+        +string WorkingDirectory
+        +bool Enabled
+        +bool AutoStart
+        +int ExitAfterSeconds
+        +Normalize()
+        +Validate()
+    }
+}
+
+KernelConfig -[hidden]- PluginConfig
+
+package SharedModels {
+    class Message {
+        +Header Header
+        +Metadata Metadata
+        +JsonElement? Payload
+        +FromJson(json)
+    }
+
+    class Header {
+        +string MessageType
+        +string MessageId
+        +DateTime Timestamp
+        +string? CorrelationId
+    }
+
+    class Metadata {
+        +string PluginId
+        +string? Sender
+        +int Sequence
+    }
+
+    class UserLoggedInEvent {
+        +int UserId
+        +string Username
+        +DateTime LoginTime
+    }
+
+    class DataProcessedEvent {
+        +Guid JobId
+        +int RecordCount
+        +TimeSpan Duration
+        +string ProcessorName
+    }
+}
+
+package Plugins {
+    class "IKT300.Plugin.EventSimulator.Program" as EventSimulatorPlugin {
+        +Main(args)
+    }
+
+    class "IKT300.Plugin.MetricLogger.Program" as MetricLoggerPlugin {
+        +Main(args)
+    }
+}
+
+ProgramKernel --> KernelServer 
+KernelServer --> KernelConfig : uses
+KernelConfig o-- PluginConfig 
+KernelServer o-- PluginInstance
+KernelServer ..> Message : parses/broadcasts
+KernelServer ..> UserLoggedInEvent
+KernelServer ..> DataProcessedEvent
+
+PluginInstance ..> TcpClient
+PluginInstance ..> Message : tracks last payload
+
+EventSimulatorPlugin ..> Message : handshake/heartbeat/events
+EventSimulatorPlugin ..> UserLoggedInEvent : emits
+EventSimulatorPlugin ..> DataProcessedEvent : emits
+EventSimulatorPlugin ..> KernelServer : TCP channel
+
+MetricLoggerPlugin ..> Message : receive/broadcast
+MetricLoggerPlugin ..> UserLoggedInEvent : logs metrics
+MetricLoggerPlugin ..> DataProcessedEvent : logs metrics
+MetricLoggerPlugin ..> KernelServer : TCP channel
+
+Message *-- Header
+Message *-- Metadata
+Message o--> UserLoggedInEvent : payload
+Message o--> DataProcessedEvent : payload
+
+@enduml                                                                                                                                                                                                                                                                                         

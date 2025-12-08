@@ -1,0 +1,47 @@
+@startuml IKT300_Deployment
+skinparam shadowing false
+skinparam nodeMargin 15
+skinparam packageStyle rectangle
+left to right direction
+
+actor Operator
+
+node "Developer Workstation" as Workstation {
+    artifact "kernelconfig.json" as ConfigFile
+}
+
+node "Host Machine" as Host {
+    frame "Microkernel Runtime" {
+        node "Kernel Process\n(IKT300.Microkernel)" as KernelProc {
+            artifact "Logs" as KernelLogs
+            artifact "Heartbeat Log" as HeartbeatLog
+        }
+
+        node "Plugin Process\n(EventSimulator)" as EventSimProc {
+            artifact "Simulated Events"
+        }
+
+        node "Plugin Process\n(MetricLogger)" as MetricLoggerProc {
+            artifact "metriclogger-metrics.log" as MetricsLog
+        }
+    }
+
+    database "Message Bus / TCP Listener" as Transport
+}
+
+
+Operator --> Workstation : edit config / launch scripts
+Workstation --> Host : deploy binaries & config
+Operator --> Host : CLI commands
+
+ConfigFile --> KernelProc : load on startup
+KernelProc --> Transport : listens on configured port
+EventSimProc --> Transport : TCP client connection
+KernelProc --> EventSimProc : broadcast messages
+MetricLoggerProc --> Transport : TCP client connection
+KernelProc --> MetricLoggerProc : broadcast messages
+MetricLoggerProc --> MetricsLog : append metrics
+KernelProc --> HeartbeatLog : append heartbeats
+KernelProc --> KernelLogs : operational logs
+
+@enduml

@@ -1,0 +1,49 @@
+@startuml IKT300_Runtime
+skinparam sequenceArrowThickness 1.2
+skinparam sequenceMessageAlign center
+skinparam ParticipantPadding 20
+skinparam BoxPadding 20
+skinparam responseMessageBelowArrow true
+
+actor Operator as User
+box "Plugins" #eef7ff
+    participant "EventSimulator" as EventSim
+    participant "MetricLogger" as MetricLogger
+end box
+participant "KernelServer" as Kernel
+participant "TCP Socket" as Transport
+participant "Message Bus" as Broadcast
+
+== Plugin bootstrap ==
+User -> EventSim: start plugin process
+EventSim -> Kernel: TCP connect
+Kernel -> Transport: register connection
+EventSim -> Kernel: Handshake(Message:Handshake)
+Kernel --> EventSim: Ack(CommandResponse)
+
+== Heartbeat loop ==
+loop every 2s
+    EventSim -> Kernel: Heartbeat(Message:Heartbeat)
+    MetricLogger -> Kernel: Heartbeat(Message:Heartbeat)
+end
+
+== Event flow ==
+EventSim -> Kernel: Send UserLoggedInEvent (CommandRequest)
+Kernel -> Broadcast: Enqueue payload
+Broadcast -> MetricLogger: Deliver CommandRequest
+MetricLogger -> MetricLogger: Deserialize + Log metrics
+MetricLogger --> Kernel: CommandResponse (optional)
+
+EventSim -> Kernel: Send DataProcessedEvent (CommandRequest)
+Kernel -> Broadcast: Enqueue payload
+Broadcast -> MetricLogger: Deliver CommandRequest
+MetricLogger -> MetricLogger: Update counters + log metrics
+MetricLogger --> Kernel: CommandResponse (optional)
+
+== Shutdown ==
+User -> Kernel: "exit" command / Ctrl+C
+Kernel -> EventSim: Broadcast shutdown notification
+Kernel -> MetricLogger: Broadcast shutdown notification
+Kernel -> Transport: Close client sockets
+Kernel -> User: Shutdown completed
+@enduml
