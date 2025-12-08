@@ -1,3 +1,4 @@
+
 @startuml IKT300_Deployment
 skinparam shadowing false
 skinparam nodeMargin 15
@@ -6,36 +7,35 @@ left to right direction
 
 actor Operator
 
-node "Developer Workstation" as Workstation {
-    artifact "kernelconfig.json" as ConfigFile
+node "Developer Workstation" <<device>> as Workstation {
+  artifact "kernelconfig.json" <<artifact>> as ConfigFile
 }
 
-node "Host Machine" as Host {
-    frame "Microkernel Runtime" {
-        node "Kernel Process\n(IKT300.Microkernel)" as KernelProc {
-            artifact "Logs" as KernelLogs
-            artifact "Heartbeat Log" as HeartbeatLog
-        }
-
-        node "Plugin Process\n(EventSimulator)" as EventSimProc {
-            artifact "Simulated Events"
-        }
-
-        node "Plugin Process\n(MetricLogger)" as MetricLoggerProc {
-            artifact "metriclogger-metrics.log" as MetricsLog
-        }
+node "Host Machine" <<device>> as Host {
+  frame "Microkernel Runtime" {
+    node "Kernel Process\n(IKT300.Microkernel)" <<executionEnvironment>> as KernelProc {
+      artifact "Logs" <<artifact>> as KernelLogs
+      artifact "Heartbeat Log" <<artifact>> as HeartbeatLog
     }
 
-    database "Message Bus / TCP Listener" as Transport
+    node "Plugin Process\n(EventSimulator)" <<executionEnvironment>> as EventSimProc {
+      artifact "Simulated Events" <<artifact>> as SimEvents
+    }
+
+    node "Plugin Process\n(MetricLogger)" <<executionEnvironment>> as MetricLoggerProc {
+      artifact "metriclogger-metrics.log" <<artifact>> as MetricsLog
+    }
+
+    node "Message Bus / TCP Listener" <<executionEnvironment>> as Transport
+  }
 }
 
-
-Operator --> Workstation : edit config / launch scripts
+Operator --> Workstation : edit config\nlaunch scripts
 Workstation --> Host : deploy binaries & config
 Operator --> Host : CLI commands
 
 ConfigFile --> KernelProc : load on startup
-KernelProc --> Transport : listens on configured port
+KernelProc --> Transport : listen(configuredPort)
 EventSimProc --> Transport : TCP client connection
 KernelProc --> EventSimProc : broadcast messages
 MetricLoggerProc --> Transport : TCP client connection
