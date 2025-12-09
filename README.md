@@ -1,3 +1,4 @@
+```markdown
 # IKT300_microkernel
 
 ## Design Overview
@@ -233,13 +234,6 @@ dotnet run --project src/IKT300.Plugin.YourPlugin/IKT300.Plugin.YourPlugin.cspro
 }
 ```
 
-Follow this checklist when opening a pull request to add a plugin:
-- [ ] Plugin project added under src/ and included in the solution.
-- [ ] Reference to IKT300.Shared added.
-- [ ] README or short usage notes added inside the plugin directory.
-- [ ] kernelconfig.json updated (or document required manual change).
-- [ ] Basic integration test run: plugin connects, handshake accepted, heartbeats received.
-
 ## Repository Structure
 - `IKT300.Microkernel`: kernel host managing TCP connections, heartbeats, and plugin lifecycles.
 - `IKT300.Plugin.EventSimulator`: traffic generator plugin used for local testing.
@@ -251,4 +245,5 @@ Follow this checklist when opening a pull request to add a plugin:
 This code was made for the microkernel assignment for IKT300 at the UIA and by Julien Bailleul, Douwe Berkeij, Mathieu Bour, Achille Papin.
 
 ### AI usage
-To make the developmet more fluent there was made use of Github copilot GPT 5.1 codex (preview) for generating documentation, bug fixing and line completion. No full pieces of code were generated that replaced human work; outputs were used as assistance and curated by the authors.
+To make the developmet more fluent there was made use of Github copilot GPT 5.1 codex (preview) for generating documentation, bug fixing and line completion. No full pieces of code were generated with Github copilot GPT 5.1 codex (preview). Futher there was also made use of Gemini 3 for suport in writing the report and making the UML. 
+```
